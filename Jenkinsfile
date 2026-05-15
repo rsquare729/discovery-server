@@ -5,45 +5,54 @@ pipeline {
         maven 'Maven-3'
     }
 
+    environment {
+        PATH = "/usr/local/bin:${env.PATH}"
+        IMAGE_NAME = "rrdocker729/discovery-server:v1"
+    }
+
     stages {
 
-        stage('Build') {
+        stage('Build JAR') {
             steps {
-                sh 'mvn clean install'
+                sh 'mvn clean package'
             }
         }
 
-        stage('Test') {
+        stage('Build Docker Image') {
             steps {
-                sh 'mvn test'
+                sh 'docker build -t $IMAGE_NAME .'
             }
         }
 
-        stage('Stop Old App') {
+        stage('Docker Login') {
+		    steps {
+		        withCredentials([usernamePassword(
+		            credentialsId: 'dockerhub-creds',
+		            usernameVariable: 'DOCKER_USER',
+		            passwordVariable: 'DOCKER_PASS'
+		        )]) {
+		
+		            sh """
+		            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+		            """
+		        }
+		    }
+		}
+
+        stage('Push Docker Image') {
+            steps {
+                sh 'docker push $IMAGE_NAME'
+            }
+        }
+
+        stage('Deploy Container') {
             steps {
                 sh '''
-                PID=$(lsof -ti:8761 || true)
+                docker rm -f discovery-server-container || true
 
-                if [ ! -z "$PID" ]; then
-                  kill -9 $PID
-                fi
-                '''
-            }
-        }
-
-        stage('Run New App') {
-            steps {
-                sh '''
-                nohup java -jar target/*.jar > app.log 2>&1 &
-                '''
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh '''
-                sleep 15
-                curl http://localhost:8761
+                docker run -d -p 8761:8761 \
+                --name discovery-server-container \
+                $IMAGE_NAME
                 '''
             }
         }
